@@ -1,0 +1,44 @@
+# Databricks Asset Bundle — deploy the whole pipeline (job, tasks, schedule)
+# with one command instead of clicking through the Workflows UI:
+#
+#   databricks bundle deploy -t dev
+#   databricks bundle run ng_banking_transaction_lakehouse_pipeline -t dev
+#
+# See: https://docs.databricks.com/en/dev-tools/bundles/index.html
+
+bundle:
+  name: ng_banking_transaction_lakehouse_pipeline
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog name for this environment
+    default: ng_banking_lakehouse
+  notification_email:
+    description: Email notified on pipeline task failure
+    default: warubayi@yahoo.com
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-9ae57ffd-5037.cloud.databricks.com/
+    variables:
+      catalog: ng_banking_lakehouse_dev
+
+  staging:
+    mode: production
+    workspace:
+      host: https://dbc-9ae57ffd-5037.cloud.databricks.com/
+    variables:
+      catalog: ng_banking_lakehouse_staging
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-9ae57ffd-5037.cloud.databricks.com/
+    variables:
+      catalog: ng_banking_lakehouse

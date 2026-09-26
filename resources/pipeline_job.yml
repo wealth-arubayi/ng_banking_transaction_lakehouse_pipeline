@@ -1,0 +1,79 @@
+resources:
+  jobs:
+    ng_banking_transaction_lakehouse_pipeline:
+      name: ng_banking_transaction_lakehouse_pipeline
+      description: >
+        Bronze -> Silver -> Gold transaction pipeline: Auto Loader ingestion,
+        incremental classification/transform, an enforced data-quality gate, and
+        five (plus AML/high-value) incremental marts. See notebooks/ for detail
+        and README.md for the architecture diagram.
+
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?" # daily at 02:00
+        timezone_id: Africa/Lagos
+        pause_status: UNPAUSED
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      job_clusters:
+        - job_cluster_key: pipeline_cluster
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: Standard_DS3_v2
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+
+      tasks:
+        - task_key: 01_ingest_transactions
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ./notebooks/01_transaction_ingestion.py
+            base_parameters:
+              catalog: ${var.catalog}
+          max_retries: 2
+          min_retry_interval_millis: 60000
+
+        - task_key: 02_validate_raw_transactions
+          depends_on:
+            - task_key: 01_ingest_transactions
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ./notebooks/02_transaction_raw_validation.sql
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: 03_transform_transactions
+          depends_on:
+            - task_key: 02_validate_raw_transactions
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ./notebooks/03_transaction_incremental_transform.py
+            base_parameters:
+              catalog: ${var.catalog}
+          max_retries: 1
+
+        - task_key: 04_quality_gate
+          depends_on:
+            - task_key: 03_transform_transactions
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ./notebooks/04b_transaction_quality_gate.py
+            base_parameters:
+              catalog: ${var.catalog}
+          # No retries: a failed quality gate means the DATA is suspect, not the
+          # infrastructure — retrying would just fail again. Fix and re-run manually.
+          max_retries: 0
+
+        - task_key: 05_build_transaction_marts
+          depends_on:
+            - task_key: 04_quality_gate
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ./notebooks/05_transaction_mart.py
+            base_parameters:
+              catalog: ${var.catalog}
+          max_retries: 1
