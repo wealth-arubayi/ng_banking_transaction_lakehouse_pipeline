@@ -123,27 +123,46 @@ ng_banking_transaction_lakehouse_pipeline/
 └── workflows/pipeline_tasks.md
 ```
 
-## Getting started
+## Deployment
 
-One-time setup, in order (these are SQL scripts and a setup notebook — not part of either
-scheduled job, since they only need to run once per catalog):
+### Prerequisites
 
-```sql
--- 1. Create the catalog, schemas, and all 11 tables
--- run sql/01_create_tables.sql
+- A Databricks workspace with Unity Catalog enabled and a running (or startable) all-purpose
+  cluster — the daily and weekly jobs each provision their own lightweight single-node job cluster,
+  so no shared cluster needs to be pre-created.
+- The [Databricks CLI](https://docs.databricks.com/en/dev-tools/cli/install.html) installed
+  locally, authenticated to your workspace (`databricks configure` or `databricks auth login`).
+- The project pushed to a Git repository — needed either way: for the CLI path it's just good
+  practice, for the Bundle UI path (below) it's required.
 
--- 2. Seed the classification reference table
--- run sql/02_seed_reference.sql
-```
+### One-time setup (per catalog, not part of either scheduled job)
+
+Run these once, in order, in a SQL editor / notebook attached to your workspace:
+
+1. **`sql/01_create_tables.sql`** — creates the catalog, all 3 schemas
+   (`transaction_raw`/`curated`/`mart`), and all 11 tables. Idempotent — safe to re-run.
+2. **`notebooks/00b_setup_volume_structure.py`** — creates the Volume's folder structure
+   (`incoming/`, `processed/`, `archive/`, Auto Loader's `schema/`/`checkpoints/`) and copies
+   `reference/transaction_mapping_seed.csv` into the Volume. Also idempotent.
+3. **`sql/02_seed_reference.sql`** — loads the classification mapping table via `COPY INTO`,
+   reading the file `00b` just placed in the Volume.
+
+Alternatively, all three steps are wrapped as a single on-demand (unscheduled) Databricks
+Job — see [`resources/setup_job.yml`](resources/setup_job.yml) — that you can trigger instead of
+running each step by hand: `databricks bundle run ng_banking_transaction_setup -t dev`.
+
+### Deploy and run
 
 ```bash
-# 3. Create the Volume's folder structure (incoming/, processed/, archive/, etc.)
-# — run notebooks/00b_setup_volume_structure.py once, idempotent to re-run
+# 1. Set your workspace host in databricks.yml (each target: workspace: host: ...)
 
-# 4. Deploy both jobs: the daily pipeline and the weekly archive sweep
+# 2. Validate the bundle before touching anything (free — no workspace changes)
+databricks bundle validate -t dev
+
+# 3. Deploy: creates both Databricks Workflows — the daily pipeline and the weekly archive sweep
 databricks bundle deploy -t dev
 
-# 5. Drop a CSV extract into transaction_files/incoming/, then run the daily pipeline
+# 4. Drop a CSV extract into the Volume, then run the daily pipeline
 databricks bundle run ng_banking_transaction_lakehouse_pipeline -t dev
 
 # The weekly archive job runs on its own schedule (Sundays 03:00) once deployed —
@@ -151,13 +170,38 @@ databricks bundle run ng_banking_transaction_lakehouse_pipeline -t dev
 databricks bundle run ng_banking_transaction_archive -t dev
 ```
 
-Or run each notebook manually in order — see [`workflows/pipeline_tasks.md`](workflows/pipeline_tasks.md).
+`-t dev` is the target; swap for `-t staging` or `-t prod` per `databricks.yml`. `dev` is marked
+`default: true`, so it's used automatically if `-t` is omitted.
 
-**Environments:** `databricks.yml` defines `dev`/`staging`/`prod` targets so the bundle *can*
-isolate environments via a per-target `catalog` variable override — but as currently configured,
-all three targets share one physical catalog (`ng_banking_lakehouse`), since only that catalog has
-been provisioned so far. To get real isolation later, create a second catalog with steps 1-3 above
-under a different name and add a `variables: catalog: <name>` override back onto that target.
+Prefer no automation at all? Every notebook can also be run manually, top to bottom, in order —
+see [`workflows/pipeline_tasks.md`](workflows/pipeline_tasks.md) for the manual sequence and what
+each task depends on.
+
+### Alternative: no CLI, deploy from the browser
+
+If `databricks.yml` lives inside a **Git folder** in your workspace (Workspace → Repos/Git
+folders → Add repo), Databricks recognizes it as a bundle automatically: open `databricks.yml`,
+click the deployments icon, pick a target, and **Deploy** — no local CLI needed. This also works
+from a cluster's **Web Terminal**, if enabled, using the same `databricks bundle` commands as
+above (auth there is automatic, tied to your workspace session).
+
+### Environments
+
+`databricks.yml` defines `dev`/`staging`/`prod` targets so the bundle *can* isolate environments
+via a per-target `catalog` variable override — but as currently configured, all three targets
+share one physical catalog (`ng_banking_lakehouse`), since only that catalog has been provisioned
+so far. To get real isolation later, run the one-time setup above under a second catalog name and
+add a `variables: catalog: <name>` override back onto that target.
+
+### A path-resolution detail worth knowing
+
+Task paths inside a `resources/*.yml` file (e.g. `notebook_path: ../notebooks/01_...py`) are
+resolved **relative to that YAML file's own folder**, not the bundle root — this is current,
+documented Databricks Asset Bundle behavior, not a workaround. Since every file under
+`resources/` sits one level below `notebooks/` and `sql/`, every reference in this project starts
+with `../`. If you add a new task pointing at a notebook, keep that in mind — `./notebooks/...`
+from inside `resources/` silently resolves to a folder that doesn't exist, and `databricks bundle
+validate` won't necessarily catch it in every case.
 
 ## Testing
 
