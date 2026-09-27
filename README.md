@@ -78,6 +78,11 @@ in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Column-level detail is in
   source-flagged AML exceptions and a configurable high-value threshold breach, aggregated by
   date/branch/currency — the kind of monitoring view a bank's financial-crime team would actually
   ask for.
+- **File lifecycle is managed, not left to accumulate.** Each source file moves
+  `incoming/` → `processed/` the moment it's durably ingested (a move failure here is a WARNING,
+  never a pipeline failure, since the data's already safely committed). A separate **weekly** job
+  then sweeps `processed/` into `archive/YYYY/MM/DD/`, dated by each file's own timestamp rather
+  than the archive run date — housekeeping is decoupled from the daily critical path entirely.
 - **No secrets in notebooks.** Any credential a notebook needs (e.g. a failure-alert webhook) is
   retrieved via `dbutils.secrets.get()` at the point of use, never hardcoded or logged.
 
@@ -89,7 +94,7 @@ in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Column-level detail is in
 | Storage | Delta Lake, Unity Catalog (3-level namespace: catalog.schema.table) |
 | Transform | PySpark (window functions for precedence matching & dedup), parameterized notebooks |
 | Data quality | Programmatic SQL checks with a pass/fail gate, results logged to a Delta table for trend analysis |
-| Orchestration | Databricks Workflows via Databricks Asset Bundles (IaC — one command deploys job + schedule + retries across dev/staging/prod) |
+| Orchestration | Databricks Workflows via Databricks Asset Bundles (IaC — one command deploys the daily pipeline job and a separate weekly archive job, with retries and failure alerts) |
 | Testing | `pytest` unit tests on the core business-rule logic (sign, absolute value, net amount, classification precedence, reversal detection) |
 | Reference data generation | Python/pandas synthetic data generator producing realistic TRN_CODE/PRODUCT/MODULE distributions across 10+ banking business lines |
 
@@ -98,15 +103,19 @@ in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Column-level detail is in
 ```
 ng_banking_transaction_lakehouse_pipeline/
 ├── databricks.yml                  # Asset Bundle: dev/staging/prod targets
-├── resources/pipeline_job.yml      # Job definition: task DAG, retries, schedule, alerts
+├── resources/
+│   ├── pipeline_job.yml            # Daily job: task DAG, retries, schedule, alerts
+│   └── archive_job.yml             # Weekly job: processed/ -> archive/YYYY/MM/DD/
 ├── notebooks/
 │   ├── 00_pipeline_config.py       # Shared config, widgets, structured logging
-│   ├── 01_transaction_ingestion.py # Bronze: Auto Loader
+│   ├── 00b_setup_volume_structure.py  # One-time (idempotent): creates incoming/processed/archive/etc.
+│   ├── 01_transaction_ingestion.py # Bronze: Auto Loader + move to processed/
 │   ├── 02_transaction_raw_validation.sql  # Bronze profiling (read-only)
 │   ├── 03_transaction_incremental_transform.py  # Silver: classify, validate, merge
 │   ├── 04_transaction_quality_checks.sql  # DQ profiling (dashboard-friendly)
 │   ├── 04b_transaction_quality_gate.py    # DQ ENFORCEMENT (fails the job)
-│   └── 05_transaction_mart.py      # Gold: 6 incremental marts
+│   ├── 05_transaction_mart.py      # Gold: 6 incremental marts
+│   └── 06_archive_processed_files.py  # Weekly: processed/ -> dated archive/
 ├── sql/                             # DDL, reference-data seeding, validation queries
 ├── reference/transaction_mapping_seed.csv  # The classification reference table
 ├── tests/test_transform_rules.py   # pytest — business rules, no Spark cluster needed
@@ -116,18 +125,39 @@ ng_banking_transaction_lakehouse_pipeline/
 
 ## Getting started
 
+One-time setup, in order (these are SQL scripts and a setup notebook — not part of either
+scheduled job, since they only need to run once per catalog):
+
+```sql
+-- 1. Create the catalog, schemas, and all 11 tables
+-- run sql/01_create_tables.sql
+
+-- 2. Seed the classification reference table
+-- run sql/02_seed_reference.sql
+```
+
 ```bash
-# 1. Deploy the job (creates catalog/schemas/tables + the Workflow)
+# 3. Create the Volume's folder structure (incoming/, processed/, archive/, etc.)
+# — run notebooks/00b_setup_volume_structure.py once, idempotent to re-run
+
+# 4. Deploy both jobs: the daily pipeline and the weekly archive sweep
 databricks bundle deploy -t dev
 
-# 2. Seed the reference mapping table
-databricks bundle run seed_reference -t dev   # or run sql/02_seed_reference.sql directly
-
-# 3. Drop a CSV extract into the Volume, then run the pipeline
+# 5. Drop a CSV extract into transaction_files/incoming/, then run the daily pipeline
 databricks bundle run ng_banking_transaction_lakehouse_pipeline -t dev
+
+# The weekly archive job runs on its own schedule (Sundays 03:00) once deployed —
+# trigger it manually any time with:
+databricks bundle run ng_banking_transaction_archive -t dev
 ```
 
 Or run each notebook manually in order — see [`workflows/pipeline_tasks.md`](workflows/pipeline_tasks.md).
+
+**Environments:** `databricks.yml` defines `dev`/`staging`/`prod` targets so the bundle *can*
+isolate environments via a per-target `catalog` variable override — but as currently configured,
+all three targets share one physical catalog (`ng_banking_lakehouse`), since only that catalog has
+been provisioned so far. To get real isolation later, create a second catalog with steps 1-3 above
+under a different name and add a `variables: catalog: <name>` override back onto that target.
 
 ## Testing
 

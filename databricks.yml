@@ -25,20 +25,14 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://dbc-9ae57ffd-5037.cloud.databricks.com/
-    variables:
-      catalog: ng_banking_lakehouse_dev
+      host: https://dbc-9ae57ffd-5037.cloud.databricks.com
 
   staging:
     mode: production
     workspace:
-      host: https://dbc-9ae57ffd-5037.cloud.databricks.com/
-    variables:
-      catalog: ng_banking_lakehouse_staging
+      host: https://dbc-9ae57ffd-5037.cloud.databricks.com
 
   prod:
     mode: production
     workspace:
-      host: https://dbc-9ae57ffd-5037.cloud.databricks.com/
-    variables:
-      catalog: ng_banking_lakehouse
+      host: https://dbc-9ae57ffd-5037.cloud.databricks.com

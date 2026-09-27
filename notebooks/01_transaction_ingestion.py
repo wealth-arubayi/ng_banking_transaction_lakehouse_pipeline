@@ -21,6 +21,11 @@ NOTEBOOK = "01_transaction_ingestion"
 
 # COMMAND ----------
 
+from datetime import datetime, timezone
+
+run_start_ts = datetime.now(timezone.utc)
+run_start_iso = run_start_ts.strftime("%Y-%m-%d %H:%M:%S")
+
 log_event(NOTEBOOK, "START", source=VOL_SOURCE, target=TBL_RAW_EVENTS)
 
 try:
@@ -66,15 +71,49 @@ query.awaitTermination()
 
 progress = query.lastProgress or {}
 rows_ingested = int(progress.get("numInputRows", 0)) if progress else 0
-files_processed = spark.sql(
-    f"SELECT COUNT(DISTINCT SOURCE_FILE_NAME) AS n FROM {TBL_RAW_EVENTS} "
-    f"WHERE RAW_INGEST_TIMESTAMP >= current_timestamp() - INTERVAL 1 HOURS"
-).first()["n"]
+
+# Files actually committed to transaction_raw in THIS run, by RAW_INGEST_TIMESTAMP
+# (precise run-start filter, not a rolling window) — this is also the authoritative
+# list for the incoming/ -> processed/ move below, since Auto Loader's own checkpoint
+# already guarantees each of these was durably written before we get here.
+ingested_files = [
+    row["SOURCE_FILE_PATH"]
+    for row in spark.sql(
+        f"SELECT DISTINCT SOURCE_FILE_PATH FROM {TBL_RAW_EVENTS} "
+        f"WHERE RAW_INGEST_TIMESTAMP >= '{run_start_iso}'"
+    ).collect()
+]
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Move ingested files: incoming/ -> processed/
+# MAGIC A move failure here is logged as a WARNING, not a pipeline failure — the data is
+# MAGIC already durably committed above (Auto Loader's checkpoint means it will never be
+# MAGIC re-ingested even if it's still sitting in incoming/), so this is housekeeping,
+# MAGIC not correctness. `06_archive_processed_files.py` sweeps processed/ into a
+# MAGIC year/month/day archive structure on a weekly schedule.
+
+# COMMAND ----------
+
+moved, move_failures = 0, []
+for file_path in ingested_files:
+    file_name = file_path.rstrip("/").split("/")[-1]
+    dest_path = f"{VOL_PROCESSED}{file_name}"
+    try:
+        dbutils.fs.mv(file_path, dest_path)
+        moved += 1
+    except Exception as exc:
+        move_failures.append(file_name)
+        log_event(NOTEBOOK, "WARNING", reason="COULD_NOT_MOVE_TO_PROCESSED",
+                   file=file_name, error=str(exc))
 
 log_event(
     NOTEBOOK, "SUCCESS",
     rows_ingested_last_batch=rows_ingested,
-    recent_files_seen=files_processed,
+    files_ingested_this_run=len(ingested_files),
+    files_moved_to_processed=moved,
+    files_move_failed=len(move_failures),
     target=TBL_RAW_EVENTS,
 )
 

@@ -31,7 +31,7 @@ resources:
         - task_key: 01_ingest_transactions
           job_cluster_key: pipeline_cluster
           notebook_task:
-            notebook_path: ./notebooks/01_transaction_ingestion.py
+            notebook_path: ../notebooks/01_transaction_ingestion.py
             base_parameters:
               catalog: ${var.catalog}
           max_retries: 2
@@ -42,7 +42,7 @@ resources:
             - task_key: 01_ingest_transactions
           job_cluster_key: pipeline_cluster
           notebook_task:
-            notebook_path: ./notebooks/02_transaction_raw_validation.sql
+            notebook_path: ../notebooks/02_transaction_raw_validation.sql
             base_parameters:
               catalog: ${var.catalog}
 
@@ -51,7 +51,7 @@ resources:
             - task_key: 02_validate_raw_transactions
           job_cluster_key: pipeline_cluster
           notebook_task:
-            notebook_path: ./notebooks/03_transaction_incremental_transform.py
+            notebook_path: ../notebooks/03_transaction_incremental_transform.py
             base_parameters:
               catalog: ${var.catalog}
           max_retries: 1
@@ -61,7 +61,7 @@ resources:
             - task_key: 03_transform_transactions
           job_cluster_key: pipeline_cluster
           notebook_task:
-            notebook_path: ./notebooks/04b_transaction_quality_gate.py
+            notebook_path: ../notebooks/04b_transaction_quality_gate.py
             base_parameters:
               catalog: ${var.catalog}
           # No retries: a failed quality gate means the DATA is suspect, not the
@@ -73,7 +73,7 @@ resources:
             - task_key: 04_quality_gate
           job_cluster_key: pipeline_cluster
           notebook_task:
-            notebook_path: ./notebooks/05_transaction_mart.py
+            notebook_path: ../notebooks/05_transaction_mart.py
             base_parameters:
               catalog: ${var.catalog}
           max_retries: 1

@@ -1,0 +1,36 @@
+resources:
+  jobs:
+    ng_banking_transaction_archive:
+      name: ng_banking_transaction_archive
+      description: >
+        Weekly housekeeping job: sweeps transaction_files/processed/ into
+        transaction_files/archive/YYYY/MM/DD/, dated per file. Runs independently
+        of the daily ingest -> mart pipeline since archiving is not on the
+        critical path for curated data or the marts.
+
+      schedule:
+        quartz_cron_expression: "0 0 3 ? * SUN" # every Sunday at 03:00
+        timezone_id: Africa/Lagos
+        pause_status: UNPAUSED
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      job_clusters:
+        - job_cluster_key: archive_cluster
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: Standard_DS3_v2
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+
+      tasks:
+        - task_key: 06_archive_processed_files
+          job_cluster_key: archive_cluster
+          notebook_task:
+            notebook_path: ../notebooks/06_archive_processed_files.py
+            base_parameters:
+              catalog: ${var.catalog}
+          max_retries: 1
+          min_retry_interval_millis: 60000

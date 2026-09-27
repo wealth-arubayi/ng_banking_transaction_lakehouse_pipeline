@@ -1,0 +1,50 @@
+resources:
+  jobs:
+    ng_banking_transaction_setup:
+      name: ng_banking_transaction_setup
+      description: >
+        One-time environment setup: creates the catalog/schemas/tables, creates the
+        Volume's folder structure, and seeds the classification reference table.
+        Deliberately has NO schedule — this is meant to be triggered manually once
+        per catalog (e.g. after provisioning a new dev/staging/prod environment),
+        not run automatically. Safe to re-run: every step is idempotent.
+
+      # No `schedule:` block on purpose — a job with no trigger just sits available
+      # for manual/on-demand runs via the Workflows UI or `databricks bundle run`.
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      job_clusters:
+        - job_cluster_key: setup_cluster
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: Standard_DS3_v2
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+
+      tasks:
+        - task_key: 01_create_tables
+          job_cluster_key: setup_cluster
+          notebook_task:
+            notebook_path: ../sql/01_create_tables.sql
+          max_retries: 0
+
+        - task_key: 00b_setup_volume_structure
+          depends_on:
+            - task_key: 01_create_tables
+          job_cluster_key: setup_cluster
+          notebook_task:
+            notebook_path: ../notebooks/00b_setup_volume_structure.py
+            base_parameters:
+              catalog: ${var.catalog}
+          max_retries: 0
+
+        - task_key: 02_seed_reference
+          depends_on:
+            - task_key: 00b_setup_volume_structure
+          job_cluster_key: setup_cluster
+          notebook_task:
+            notebook_path: ../sql/02_seed_reference.sql
+          max_retries: 0

@@ -48,6 +48,18 @@ flowchart TD
     T4 -->|CRITICAL check fails| X[Job FAILS\nmarts not rebuilt on bad data]
 ```
 
+## File lifecycle (separate weekly job, not part of the DAG above)
+
+```mermaid
+flowchart LR
+    A[incoming/] -->|01 ingest: durable commit,\nthen dbutils.fs.mv| B[processed/]
+    B -->|06 archive job\nweekly, Sundays 03:00| C[archive/YYYY/MM/DD/\ndated per file]
+```
+
+`06_archive_processed_files` is deployed as its own job (`resources/archive_job.yml`), decoupled
+from the daily pipeline on purpose — housekeeping shouldn't be able to block, or be blocked by,
+the ingest → mart critical path.
+
 ## Why this shape
 
 - **Auto Loader + schema rescue (Bronze):** new/unexpected source columns land in
@@ -70,6 +82,12 @@ flowchart TD
   dates/months touched by the current run, so a 6-mart refresh is proportional to today's
   volume, not total history.
 - **Config isolated in one notebook (`00_pipeline_config.py`):** table names, paths and the
-  environment (`dev`/`staging`/`prod`) are set once via widgets and imported everywhere else
-  with `%run`, so promoting the pipeline between environments is a parameter change, not a
-  find-and-replace across five files.
+  environment are set once via widgets and imported everywhere else with `%run`, so promoting
+  the pipeline between environments is a `catalog` parameter change, not a find-and-replace
+  across files. `databricks.yml` defines `dev`/`staging`/`prod` targets for this; as deployed
+  today all three share the one catalog that's actually been provisioned, with per-target
+  isolation available the moment a second catalog exists.
+- **File housekeeping is a separate concern from data correctness:** moving a file to
+  `processed/` or `archive/` never touches `transaction_raw`/`transaction_curated`/`transaction_mart` —
+  a move failure is a logged warning, not a pipeline failure, and the weekly archive job runs
+  independently of the daily job entirely.

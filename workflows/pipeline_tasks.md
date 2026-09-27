@@ -8,8 +8,15 @@ Two ways to run this:
 2. **Manual Workflow UI:** create a job with the five tasks and dependencies described here.
 
 Every notebook (except `00_pipeline_config`, which is `%run` rather than a task) takes a
-`catalog` base parameter so the same job definition runs against `dev`/`staging`/`prod`
-Unity Catalog catalogs without editing notebook code.
+`catalog` base parameter, so the same job definition can run against separate `dev`/`staging`/`prod`
+Unity Catalog catalogs without editing notebook code — as configured today, all three
+`databricks.yml` targets happen to point at the one catalog that's actually been provisioned
+(`ng_banking_lakehouse`); the per-target override is there for whenever a second catalog exists.
+
+**One-time setup, not a job task:** `notebooks/00b_setup_volume_structure.py` creates the
+Volume's `incoming/`, `processed/`, `archive/`, `schema/`, and `checkpoints/` folders. Run it
+once per catalog (idempotent to re-run), after `sql/01_create_tables.sql` and before the first
+pipeline run.
 
 ## Task dependency
 
@@ -45,3 +52,14 @@ critical path and doesn't need to be a job task.
   `05_transaction_mart.py`).
 - Failure notifications go to the email configured in the `notification_email` bundle
   variable — set per target in `databricks.yml`.
+
+## Weekly archive job (separate from the job above)
+
+`resources/archive_job.yml` defines a second, independent job —
+`ng_banking_transaction_archive` — running `notebooks/06_archive_processed_files.py` on its
+own schedule (Sundays 03:00 Africa/Lagos). It sweeps `transaction_files/processed/` into
+`transaction_files/archive/YYYY/MM/DD/`, dated by each file's own timestamp rather than the
+day the archive job happens to run. It's deployed by the same `databricks bundle deploy`
+command (picked up automatically via `databricks.yml`'s `include: resources/*.yml`) but is
+deliberately not a task in the daily job — archiving isn't on the critical path for curated
+data or the marts, so it shouldn't be able to block or be blocked by them.

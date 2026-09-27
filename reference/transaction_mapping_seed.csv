@@ -2,20 +2,20 @@ TRN_CODE,MODULE,PRODUCT,PRIORITY,MAP_MODULE,MODULE_CATEGORY,MODULE_DESCRIPTION,T
 F23,,,100,FUNDS_TRANSFER,TRANSFER,Funds Transfer,TRANSFER,Funds Transfer,false,Y
 F24,,,100,FUNDS_TRANSFER,TRANSFER,Funds Transfer,TRANSFER,Funds Transfer,false,Y
 T10,,,100,ACCOUNT_SERVICING,ACCOUNT_TRANSACTION,Account Transaction,ACCOUNT_TRANSACTION,Account Transaction,false,Y
-,,DE,10,DEPOSIT,DEPOSIT,Deposit / Account Deposit,DEPOSIT,Deposit / Account Deposit,false,Y
-,,FT,10,FUNDS_TRANSFER,TRANSFER,Funds Transfer,TRANSFER,Funds Transfer,false,Y
-,,CL,10,LOAN,LENDING,Loan / Lending,LOAN,Loan / Lending,false,Y
-,,LD,10,LOAN,LENDING,Loan / Lending,LOAN,Loan / Lending,false,Y
-,,LC,10,LETTER_OF_CREDIT,TRADE_FINANCE,Letter of Credit,TRADE_FINANCE,Letter of Credit,false,Y
-,,BC,10,BILLS,TRADE_FINANCE,Bills / Collections,TRADE_FINANCE,Bills / Collections,false,Y
-,,FX,10,FOREIGN_EXCHANGE,TREASURY,Foreign Exchange,FOREIGN_EXCHANGE,Foreign Exchange,false,Y
-,,MM,10,MONEY_MARKET,TREASURY,Money Market,MONEY_MARKET,Money Market,false,Y
-,,IC,10,INTEREST,ACCOUNT_SERVICING,Interest / Charges,CHARGES,Interest / Charges,false,Y
-,,AC,10,ACCOUNTING,ACCOUNTING,General Accounting,ACCOUNTING,General Accounting,false,Y
-,,ST,10,SECURITIES,INVESTMENTS,Securities,INVESTMENT,Securities Transaction,false,Y
-,,SI,10,STANDING_INSTRUCTION,PAYMENTS,Standing Instruction,PAYMENT,Standing Instruction,false,Y
-,,PM,10,PAYMENTS,PAYMENTS,Payment Processing,PAYMENT,Payment Processing,false,Y
-,,RM,10,REMITTANCE,PAYMENTS,Remittance,PAYMENT,Remittance,false,Y
-,,SW,10,SWIFT,PAYMENTS,SWIFT Payment,TRANSFER,SWIFT Payment,false,Y
-,,CH,10,CHEQUE,PAYMENTS,Cheque Processing,PAYMENT,Cheque Processing,false,Y
+,DE,,10,DEPOSIT,DEPOSIT,Deposit / Account Deposit,DEPOSIT,Deposit / Account Deposit,false,Y
+,FT,,10,FUNDS_TRANSFER,TRANSFER,Funds Transfer,TRANSFER,Funds Transfer,false,Y
+,CL,,10,LOAN,LENDING,Loan / Lending,LOAN,Loan / Lending,false,Y
+,LD,,10,LOAN,LENDING,Loan / Lending,LOAN,Loan / Lending,false,Y
+,LC,,10,LETTER_OF_CREDIT,TRADE_FINANCE,Letter of Credit,TRADE_FINANCE,Letter of Credit,false,Y
+,BC,,10,BILLS,TRADE_FINANCE,Bills / Collections,TRADE_FINANCE,Bills / Collections,false,Y
+,FX,,10,FOREIGN_EXCHANGE,TREASURY,Foreign Exchange,FOREIGN_EXCHANGE,Foreign Exchange,false,Y
+,MM,,10,MONEY_MARKET,TREASURY,Money Market,MONEY_MARKET,Money Market,false,Y
+,IC,,10,INTEREST,ACCOUNT_SERVICING,Interest / Charges,CHARGES,Interest / Charges,false,Y
+,AC,,10,ACCOUNTING,ACCOUNTING,General Accounting,ACCOUNTING,General Accounting,false,Y
+,ST,,10,SECURITIES,INVESTMENTS,Securities,INVESTMENT,Securities Transaction,false,Y
+,SI,,10,STANDING_INSTRUCTION,PAYMENTS,Standing Instruction,PAYMENT,Standing Instruction,false,Y
+,PM,,10,PAYMENTS,PAYMENTS,Payment Processing,PAYMENT,Payment Processing,false,Y
+,RM,,10,REMITTANCE,PAYMENTS,Remittance,PAYMENT,Remittance,false,Y
+,SW,,10,SWIFT,PAYMENTS,SWIFT Payment,TRANSFER,SWIFT Payment,false,Y
+,CH,,10,CHEQUE,PAYMENTS,Cheque Processing,PAYMENT,Cheque Processing,false,Y
 REV,,,100,REVERSAL,REVERSAL,System Reversal,REVERSAL,System Reversal,true,Y
