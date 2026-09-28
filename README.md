@@ -7,9 +7,11 @@ and compliance monitoring) rather than a toy dataset with three columns.**
 
 ![Databricks](https://img.shields.io/badge/Databricks-Lakehouse-FF3621?logo=databricks&logoColor=white)
 ![PySpark](https://img.shields.io/badge/PySpark-Structured%20Streaming-E25A1C?logo=apachespark&logoColor=white)
-![Delta Lake](https://img.shields.io/badge/Delta%20Lake-Unity%20Catalog-00ADD8)
-![SQL](https://img.shields.io/badge/SQL-Data%20Quality%20%2B%20Marts-4479A1)
-![pytest](https://img.shields.io/badge/pytest-unit%20tested-0A9EDC?logo=pytest&logoColor=white)
+![Delta Lake](https://img.shields.io/badge/Delta%20Lake-ACID%20Transactions-00ADD8)
+![Unity Catalog](https://img.shields.io/badge/Unity%20Catalog-Governance-6F42C1)
+![DABs](https://img.shields.io/badge/DABs-IaC%20Deployment-209CE5)
+![pytest](https://img.shields.io/badge/pytest-10%20tests%20passing-0A9EDC?logo=pytest&logoColor=white)
+![Mermaid](https://img.shields.io/badge/Docs-Mermaid%20Diagrams-FFB13B)
 ![Status](https://img.shields.io/badge/status-active%20portfolio%20project-brightgreen)
 
 > 💡 **In plain terms:** this pipeline takes a raw daily transaction extract from a core banking
@@ -18,6 +20,31 @@ and compliance monitoring) rather than a toy dataset with three columns.**
 > checks that the numbers add up correctly, and rolls everything up into ready-to-query summary
 > tables — automatically, every day, with a built-in circuit breaker that stops the pipeline
 > rather than publish bad numbers if something upstream breaks.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone and enter the project
+git clone <repo-url> && cd ng_banking_transaction_lakehouse_pipeline
+
+# 2. One-time setup: create catalog, schemas, tables, volumes, and seed reference data
+databricks bundle run ng_banking_transaction_setup -t dev
+
+# 3. Drop a CSV extract into the Volume's incoming/ folder, then run the daily pipeline
+databricks bundle run ng_banking_transaction_lakehouse_pipeline -t dev
+
+# 4. Query the marts
+SELECT * FROM ng_banking_lakehouse.transaction_mart.daily_transaction_activity LIMIT 10;
+```
+
+| What you need | How long | What you get |
+|---|---|---|
+| **Run the pipeline** | 1 command | 50K transactions classified, quality-gated, and aggregated into 6 marts |
+| **Add a new transaction code** | 1 SQL `INSERT` | Next run auto-classifies it — no code change, no redeploy |
+| **Check data quality** | 1 query | 10 DQ checks with trend history in `pipeline_dq_results` |
+| **Deploy infrastructure** | 1 command | 4 Databricks Jobs (daily pipeline, setup, weekly archive, weekly sweep) |
 
 ---
 
@@ -35,6 +62,8 @@ export — not a simplified stand-in for one.
 
 ## Architecture
 
+### Data flow (medallion)
+
 ```mermaid
 flowchart LR
     A[Daily CSV extract] -->|Auto Loader| B[(Bronze\ntransaction_events)]
@@ -44,6 +73,17 @@ flowchart LR
     E -->|pass| F[(Gold\n6 marts)]
     E -->|CRITICAL fail| G[Job stops\nmarts not touched]
 ```
+
+### Job landscape
+
+Four Databricks Jobs are defined in the bundle, each with its own schedule and retry strategy:
+
+| Job | Schedule | Tasks | Retries | Purpose |
+|---|---|---|---|---|
+| `ng_banking_transaction_lakehouse_pipeline` | Daily 08:00 Lagos | 01 -> 02 -> 03 -> 04b -> 05 -> 07 | Task-specific (0-2) | Ingest, classify, quality-gate, build marts |
+| `ng_banking_transaction_setup` | On-demand | 3 setup steps | 0 | Create catalog, tables, volumes, seed reference data |
+| `ng_banking_transaction_archive` | Weekly Sun 03:00 | 1 archive task | 1 | Move processed files to dated archive folders |
+| `ng_banking_transaction_sweep` | Weekly Sun 03:30 | 1 sweep task | 1 | Clean stale checkpoints and schema folders |
 
 Full diagrams (medallion layer detail + task DAG) and the reasoning behind each design choice are
 in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Column-level detail is in
@@ -250,18 +290,22 @@ Key columns are listed below; full column-level descriptions are in
 | Storage | Delta Lake, Unity Catalog (3-level namespace: catalog.schema.table) |
 | Transform | PySpark (window functions for precedence matching & dedup), parameterized notebooks |
 | Data quality | Programmatic SQL checks with a pass/fail gate, results logged to a Delta table for trend analysis |
-| Orchestration | Databricks Workflows via Databricks Asset Bundles (IaC — one command deploys the daily pipeline job and a separate weekly archive job, with retries and failure alerts) |
-| Testing | `pytest` unit tests on the core business-rule logic (sign, absolute value, net amount, classification precedence, reversal detection) |
-| Reference data generation | Python/pandas synthetic data generator producing realistic TRN_CODE/PRODUCT/MODULE distributions across 10+ banking business lines |
+| Orchestration | Databricks Jobs via Declarative Automation Bundles (IaC — one command deploys 4 jobs: daily pipeline, setup, weekly archive, weekly sweep, with per-task retries and failure alerts) |
+| Testing | `pytest` unit tests (10 tests) on core business-rule logic (sign, absolute value, net amount, classification precedence, reversal detection); Databricks workspace-compatible via `conftest.py` + `pytest.ini` |
+| Synthetic data | Python/pandas generator producing realistic TRN_CODE/PRODUCT/MODULE distributions across 10+ banking business lines (retail, lending, trade finance, treasury, payments, SWIFT, securities, cheques) |
 
 ## Repository structure
 
 ```
 ng_banking_transaction_lakehouse_pipeline/
 ├── databricks.yml                  # Asset Bundle: dev/staging/prod targets
+├── conftest.py                     # pytest config for Databricks FUSE mount
+├── pytest.ini                      # pytest options (no cache, verbose, tests/ dir)
 ├── resources/
 │   ├── pipeline_job.yml            # Daily job: task DAG, retries, schedule, alerts
-│   └── archive_job.yml             # Weekly job: processed/ -> archive/YYYY/MM/DD/
+│   ├── setup_job.yml               # On-demand: create catalog + tables + seed data
+│   ├── archive_job.yml             # Weekly job: processed/ -> archive/YYYY/MM/DD/
+│   └── sweep_job.yml               # Weekly job: clean stale checkpoints + schema folders
 ├── notebooks/
 │   ├── 00_pipeline_config.py       # Shared config, widgets, structured logging
 │   ├── 00b_setup_volume_structure.py  # One-time (idempotent): creates incoming/processed/archive/etc.
@@ -273,9 +317,12 @@ ng_banking_transaction_lakehouse_pipeline/
 │   ├── 05_transaction_mart.py      # Gold: 6 incremental marts
 │   ├── 06_archive_processed_files.py  # Weekly: processed/ -> dated archive/
 │   ├── 07_pipeline_success_notification.py  # Post-success email notification
-│   └── Pipeline Reset and Backfill.py  # One-off: truncate + re-run after schema fixes
+│   ├── 08_sweep_incoming_files.py   # Weekly: clean stale checkpoints
+│   └── Pipeline Reset and Backfill.ipynb  # One-off: truncate + re-run after schema fixes
 ├── scripts/
-│   └── check_undeployed.sh          # Detect changes not yet deployed via DABs
+│   ├── check_undeployed.sh          # Detect changes not yet deployed via DABs
+│   ├── commit_and_deploy.sh         # Git commit + push + bundle validate + deploy + stamp
+│   └── run_tests.sh                 # pytest wrapper for Databricks workspace
 ├── sql/                             # DDL, reference-data seeding, validation queries
 ├── reference/transaction_mapping_seed.csv  # The classification reference table
 ├── tests/test_transform_rules.py   # pytest — business rules, no Spark cluster needed
@@ -353,11 +400,36 @@ share one physical catalog (`ng_banking_lakehouse`), since only that catalog has
 so far. To get real isolation later, run the one-time setup above under a second catalog name and
 add a `variables: catalog: <name>` override back onto that target.
 
+### Checking deployment status
+
+Use `databricks bundle` commands to inspect what's currently deployed in the workspace:
+
+```bash
+# Show all resources defined in the bundle (jobs, pipelines, etc.)
+databricks bundle summary -t dev
+
+# Validate the bundle configuration without deploying
+databricks bundle validate -t dev
+
+# List deployed jobs that belong to this bundle
+ databricks jobs list --filter 'name starts with "ng_banking"' -o json
+
+# Check a specific deployed job's current settings
+databricks jobs get <job_id> -o json
+```
+
+The `bundle summary` command shows the bundle's resource tree and the workspace paths
+for each deployed job. Compare the output with your local `resources/*.yml` files to
+confirm the deployed state matches your configuration.
+
 ### Tracking undeployed changes
 
 `scripts/check_undeployed.sh` detects code changes that haven't reached the workspace
-via a DABs deploy yet — useful before a release or as a CI gate. It checks three layers:
+via a DABs deploy yet — useful before a release or as a CI gate. It checks four layers:
 
+0. **Workspace** — queries the Databricks workspace to confirm the bundle's jobs are
+   live, and compares a content hash of local source files against the last deployed
+   hash (stored in `.last_deploy_hash_<target>`).
 1. **Git** — uncommitted edits and unpushed commits (code not even in the repo yet)
 2. **Bundle** — `databricks bundle validate` (is the config structurally deployable?)
 3. **Drift** — files modified after the last deployment timestamp marker
@@ -373,13 +445,6 @@ via a DABs deploy yet — useful before a release or as a CI gate. It checks thr
 ./scripts/check_undeployed.sh --skip-validate
 ```
 
-After each successful deploy, stamp the marker so the drift check has a baseline:
-
-```bash
-databricks bundle deploy -t dev
-date -u +%Y-%m-%dT%H:%M:%SZ > .last_deploy_dev
-```
-
 Exit codes: `0` = clean, `1` = undeployed changes found, `2` = error. This makes the
 script suitable as a pre-deploy CI gate:
 
@@ -389,6 +454,32 @@ script suitable as a pre-deploy CI gate:
   run: ./scripts/check_undeployed.sh -t prod
   continue-on-error: false  # fails the pipeline if changes are undeployed
 ```
+
+### Commit & deploy in one step
+
+`scripts/commit_and_deploy.sh` combines the full release workflow: pre-flight check,
+Git commit + push to GitHub, bundle validation, deployment, and marker stamping.
+
+```bash
+# Commit all changes, push to GitHub, validate, and deploy
+./scripts/commit_and_deploy.sh -t dev
+
+# With a custom commit message
+./scripts/commit_and_deploy.sh -t dev -m "fix: TRANSACTION_CATEGORY null bug"
+
+# Deploy only (skip the Git commit/push step)
+./scripts/commit_and_deploy.sh -t dev --skip-commit
+
+# Dry run — show what would happen without making changes
+./scripts/commit_and_deploy.sh -t dev --dry-run
+```
+
+After deploying, the script automatically stamps both markers:
+
+- `.last_deploy_<target>` — UTC timestamp of the deployment
+- `.last_deploy_hash_<target>` — SHA-256 hash of all source files (notebooks,
+  resources, SQL, scripts, `databricks.yml`), used by `check_undeployed.sh` to
+detect content drift between deploys.
 
 ### A path-resolution detail worth knowing
 
@@ -400,15 +491,121 @@ with `../`. If you add a new task pointing at a notebook, keep that in mind — 
 from inside `resources/` silently resolves to a folder that doesn't exist, and `databricks bundle
 validate` won't necessarily catch it in every case.
 
+## Pipeline monitoring & observability
+
+Every pipeline run produces three layers of observability data, all queryable in SQL:
+
+| Table | What it tracks | Example query |
+|---|---|---|
+| `pipeline_dq_results` | 10 DQ checks per run (6 CRITICAL + 4 WARN), with pass/fail and measured value | `SELECT CHECK_NAME, RESULT_VALUE, PASSED FROM ... ORDER BY CHECKED_TIMESTAMP DESC` |
+| `pipeline_processing_log` | Per-run audit: row counts received/valid/invalid, date range, duration, status | `SELECT RUN_START_TIMESTAMP, RECORDS_RECEIVED, INVALID_RECORDS, STATUS FROM ...` |
+| `etl_watermark` | Incremental processing cursor — shows exactly how far the pipeline has processed | `SELECT LAST_RAW_INGEST_TIMESTAMP, LAST_RUN_TIMESTAMP FROM ...` |
+
+### Data quality checks enforced by 04b
+
+| Check | Severity | What it validates |
+|---|---|---|
+| `DUPLICATE_TRANSACTION_KEY` | CRITICAL | No duplicate hash keys in curated table |
+| `SIGN_ABS_NET_CONSISTENCY` | CRITICAL | ABS_LCY_AMOUNT = abs(NET_SIGNED_AMOUNT) for every row |
+| `DRCR_IND_CREDIT_DEBIT_FLAG` | CRITICAL | TRANSACTION_DIRECTION matches DRCR_IND (C=credit, D=debit) |
+| `CREDIT_POSITIVE_NET_AMOUNT` | CRITICAL | Credit transactions have positive NET_SIGNED_AMOUNT |
+| `DEBIT_NEGATIVE_NET_AMOUNT` | CRITICAL | Debit transactions have negative NET_SIGNED_AMOUNT |
+| `REVERSAL_CANDIDATE_WITHOUT_VERIFIED_CODE` | CRITICAL | Every IS_REVERSAL_CANDIDATE row has a verified reversal code |
+| `EMPTY_RELATED_AC_ENTRY_SR_NO_PCT` | WARN | Population % of a source column that is currently 100% empty |
+| `EMPTY_GRP_REF_NO_PCT` | WARN | Same, for GRP_REF_NO |
+| `EMPTY_GLMIS_UPDATE_FLAG_PCT` | WARN | Same, for GLMIS_UPDATE_FLAG |
+| `EMPTY_ORIG_PNL_GL_PCT` | WARN | Same, for ORIG_PNL_GL |
+
+A CRITICAL failure aborts the job before marts are touched. A WARN failure logs the
+result but allows the pipeline to continue.
+
+## Operational runbook
+
+### The quality gate failed — what do I do?
+
+1. Check which CRITICAL check failed:
+   ```sql
+   SELECT CHECK_NAME, RESULT_VALUE, PASSED FROM ng_banking_lakehouse.transaction_curated.pipeline_dq_results
+   WHERE PASSED = false AND SEVERITY = 'CRITICAL'
+   ORDER BY CHECKED_TIMESTAMP DESC LIMIT 5;
+   ```
+2. If `DUPLICATE_TRANSACTION_KEY` — a schema change may have altered the hash. Run the
+   `Pipeline Reset and Backfill` notebook to truncate and reprocess.
+3. If `SIGN_ABS_NET_CONSISTENCY` — inspect rows where `ABS_LCY_AMOUNT != abs(NET_SIGNED_AMOUNT)`
+   in the curated table for bad source data.
+4. If `REVERSAL_CANDIDATE_WITHOUT_VERIFIED_CODE` — a new TRN_CODE was added to the source
+   that produces negative amounts but isn't in the mapping table. Add it to
+   `transaction_mapping` with `IS_REVERSAL_CODE = true` if it's a verified reversal.
+
+### The pipeline ran but mart rows are NULL or zero
+
+This typically means the transform ran but a column was dropped from the output list.
+Check the curated table for the column in question, then verify it appears in the
+`outcols` list in `03_transaction_incremental_transform.py`. If it was missing, add it
+and run the `Pipeline Reset and Backfill` notebook.
+
+### Reset and backfill procedure
+
+The `Pipeline Reset and Backfill` notebook truncates all curated and mart tables, resets
+the watermark to 1900-01-01, and re-runs notebooks 03, 04b, and 05 in sequence. Use this
+when a schema fix changes the TRANSACTION_KEY hash (e.g. the AC_ENTRY_SR_NO type widening)
+or when a column was missing from the output and needs backfilling.
+
+**Run it manually** — the truncation step is destructive and requires human confirmation.
+Open the notebook and click Run All.
+
+### A new transaction code appears in the source feed
+
+1. Check if it's already covered by a wildcard mapping:
+   ```sql
+   SELECT * FROM ng_banking_lakehouse.transaction_curated.transaction_mapping
+   WHERE TRN_CODE = 'NEW_CODE' OR TRN_CODE IS NULL;
+   ```
+2. If not, insert a new row with the appropriate category and description:
+   ```sql
+   INSERT INTO ng_banking_lakehouse.transaction_curated.transaction_mapping
+   VALUES ('NEW_CODE', 'FT', null, 100, 'TRANSFER', 'Funds Transfer', false, 'Y');
+   ```
+3. The next pipeline run will auto-classify all rows with that code — no redeploy needed.
+
+## Security & governance
+
+| Concern | How this pipeline handles it |
+|---|---|
+| **Secrets management** | Any credential (e.g. alert webhook URLs) is retrieved via `dbutils.secrets.get()` at the point of use. No secrets are hardcoded, logged, or committed. |
+| **Unity Catalog** | All tables live in a single catalog (`ng_banking_lakehouse`) with three schemas (`transaction_raw`, `transaction_curated`, `transaction_mart`). Access is governed by UC grants, not filesystem permissions. |
+| **Data lineage** | Every curated row carries `PIPELINE_RUN_ID`, `SOURCE_FILE_NAME`, and `RAW_INGEST_TIMESTAMP` for full traceability from mart back to source file. |
+| **Audit trail** | `pipeline_processing_log` records every run with start/end timestamps, row counts, and status. `pipeline_dq_results` records every DQ check outcome. |
+| **No real PII** | The pipeline uses synthetic data matching the Flexcube schema shape. No real customer data is ingested or stored. |
+
+## Business questions the marts answer
+
+| Mart table | Business question |
+|---|---|
+| `daily_transaction_activity` | What is the daily transaction volume, credit/debit split, and net flow by branch and currency? |
+| `account_transaction_activity` | Which accounts are most active this month, and how many distinct transaction categories do they use? |
+| `branch_transaction_activity` | Which branches handle the highest transaction volumes, and what is their credit/debit mix? |
+| `transaction_code_activity` | Which transaction codes drive the most volume, and what business category do they fall under? |
+| `transaction_category_activity` | How do transaction volumes break down by business category (TRANSFER, DEPOSIT, LOAN, TRADE_FINANCE)? |
+| `aml_exception_activity` | How many AML-flagged and high-value transactions occurred by branch, and what is the total exposure? |
+
 ## Testing
 
 ```bash
+# On Databricks (workspace FUSE mount doesn't support __pycache__)
+./scripts/run_tests.sh                         # wrapper (sets PYTHONDONTWRITEBYTECODE=1)
+PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/   # or set the env var manually
+
+# On a local dev machine (standard filesystem)
 pytest tests/test_transform_rules.py -v
 ```
 
 Ten unit tests cover the sign convention, absolute/net amount derivation, the
 negative-amount-is-not-automatically-a-reversal rule, and the classification precedence
 ordering — all without needing a Spark cluster, so they run in CI in milliseconds.
+A `conftest.py` at the project root sets `sys.dont_write_bytecode = True` for the
+test modules, and `pytest.ini` disables the `.pytest_cache` provider, so the
+Databricks UI test runner works without any manual env var setup.
 
 ## Synthetic data
 
@@ -417,6 +614,20 @@ not included in this package) produces a configurable, schema-matched synthetic 
 spanning every business line the reference mapping supports — retail channels, funds
 transfer, lending, trade finance, treasury, interest/charges, accounting, securities,
 standing instructions, payments, remittance, SWIFT, and cheque processing.
+
+## Performance & scale
+
+| Metric | Value |
+|---|---|
+| Source rows per batch | 50,000 (synthetic; production would be 100K-500K daily) |
+| Raw columns | 67 (all string — schema-agnostic Auto Loader) |
+| Curated columns | 83 (typed, classified, validated) |
+| Mart tables | 6 (daily, account, branch, code, category, AML) |
+| Classification rules | 40 active mappings covering 10+ banking business lines |
+| DQ checks per run | 10 (6 CRITICAL gate + 4 WARN trend) |
+| Incremental processing | Yes — watermark-based; cost stays flat as history grows |
+| Idempotent | Yes — safe to re-run any notebook after partial failure |
+| Unit tests | 10 (run in < 1 second, no Spark cluster needed) |
 
 ---
 
@@ -457,8 +668,30 @@ standing instructions, payments, remittance, SWIFT, and cheque processing.
 
 **Deployment tooling:**
 
-- Added `scripts/check_undeployed.sh` — detects Git-uncommitted, bundle-invalid, and
-  post-deploy-drift changes before a release.
+- Added `scripts/check_undeployed.sh` — 4-layer drift detector (workspace status, Git,
+  bundle validate, file timestamp drift) with exit codes for CI gates.
+- Added `scripts/commit_and_deploy.sh` — one-step release workflow: pre-flight check,
+  Git commit + push, bundle validate + deploy, deployment marker stamping.
+- Added `scripts/run_tests.sh` — pytest wrapper that sets `PYTHONDONTWRITEBYTECODE=1`
+  and `PYTHONPYCACHEPREFIX` for the Databricks workspace FUSE mount.
+- Added `conftest.py` and `pytest.ini` at project root for Databricks-compatible test
+  execution via the UI test runner.
+
+**Documentation:**
+
+- Added `Tables` section to README with schema snippets for all 14 tables grouped by
+  medallion layer (Bronze, Silver, Gold).
+- Added `Quick Start` section with 4-command onboarding guide.
+- Added `Job landscape` table documenting all 4 bundle jobs (pipeline, setup, archive,
+  sweep) with schedules and retry strategies.
+- Added `Pipeline monitoring & observability` section with DQ check table and
+  monitoring queries.
+- Added `Operational runbook` section covering quality gate failures, NULL mart
+  columns, reset procedure, and new transaction code onboarding.
+- Added `Security & governance` section covering secrets, Unity Catalog, lineage,
+  audit trail, and PII handling.
+- Added `Business questions the marts answer` section mapping each mart to its
+  analytical use case.
 
 ---
 
