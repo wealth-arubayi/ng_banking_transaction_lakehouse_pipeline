@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 05 · Transaction Marts (Gold)
 # MAGIC Rebuilds each mart's slice for exactly the dates/months touched by this run

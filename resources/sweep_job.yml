@@ -1,0 +1,26 @@
+resources:
+  jobs:
+    ng_banking_transaction_sweep:
+      name: ng_banking_transaction_sweep
+      description: >
+        Manual/on-demand housekeeping: moves files that have already been ingested
+        by Auto Loader but are still sitting in the incoming/ directory (typically
+        because the incoming/ -> processed/ move step in the daily pipeline logged
+        a WARNING instead of failing hard). Deliberately has NO schedule — trigger
+        manually via the Jobs UI or `databricks bundle run`. Safe to re-run: only
+        moves files whose SOURCE_FILE_NAME already exists in the raw table.
+
+      # No `schedule:` block on purpose — same pattern as setup_job.yml.
+      # A job with no trigger just sits available for manual/on-demand runs.
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      tasks:
+        - task_key: 08_sweep_incoming_files
+          notebook_task:
+            notebook_path: ../notebooks/08_sweep_incoming_files.py
+            base_parameters:
+              catalog: ${var.catalog}
+          max_retries: 0

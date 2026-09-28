@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 00b · Volume Structure Setup
 # MAGIC Run this **once** after `sql/01_create_tables.sql` (which creates the `transaction_files`

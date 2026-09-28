@@ -37,8 +37,7 @@ entries = spark.table(TBL_ENTRIES)
 CHECKS = [
     (
         "DUPLICATE_TRANSACTION_KEY", "CRITICAL",
-        f"""SELECT COUNT(*) AS RESULT FROM (
-              SELECT TRANSACTION_KEY FROM {TBL_ENTRIES} GROUP BY TRANSACTION_KEY HAVING COUNT(*) > 1)""",
+        f"SELECT COUNT(*) - COUNT(DISTINCT TRANSACTION_KEY) AS RESULT FROM {TBL_ENTRIES}",
     ),
     (
         "SIGN_MISMATCH", "CRITICAL",
@@ -74,6 +73,29 @@ CHECKS = [
     (
         "DEBIT_ROWS_CLASSIFIED_AS_DEPOSIT", "WARN",
         f"SELECT COUNT(*) AS RESULT FROM {TBL_ENTRIES} WHERE DRCR_IND='D' AND MODULE_CATEGORY='DEPOSIT'",
+    ),
+    # Source completeness WARN checks — these columns exist in the raw schema but are
+    # 100% empty in the source CSV. Logged for trend tracking; no threshold so they
+    # always pass (the team monitors population % over time via pipeline_dq_results).
+    (
+        "EMPTY_RELATED_AC_ENTRY_SR_NO_PCT", "WARN",
+        f"""SELECT ROUND(100.0 * SUM(CASE WHEN RELATED_AC_ENTRY_SR_NO IS NOT NULL AND TRIM(RELATED_AC_ENTRY_SR_NO) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS RESULT
+              FROM {TBL_ENTRIES}""",
+    ),
+    (
+        "EMPTY_GRP_REF_NO_PCT", "WARN",
+        f"""SELECT ROUND(100.0 * SUM(CASE WHEN GRP_REF_NO IS NOT NULL AND TRIM(GRP_REF_NO) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS RESULT
+              FROM {TBL_ENTRIES}""",
+    ),
+    (
+        "EMPTY_GLMIS_UPDATE_FLAG_PCT", "WARN",
+        f"""SELECT ROUND(100.0 * SUM(CASE WHEN GLMIS_UPDATE_FLAG IS NOT NULL AND TRIM(GLMIS_UPDATE_FLAG) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS RESULT
+              FROM {TBL_ENTRIES}""",
+    ),
+    (
+        "EMPTY_ORIG_PNL_GL_PCT", "WARN",
+        f"""SELECT ROUND(100.0 * SUM(CASE WHEN ORIG_PNL_GL IS NOT NULL AND TRIM(ORIG_PNL_GL) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS RESULT
+              FROM {TBL_ENTRIES}""",
     ),
 ]
 

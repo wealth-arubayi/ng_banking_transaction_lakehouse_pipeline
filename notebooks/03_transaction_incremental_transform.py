@@ -57,21 +57,27 @@ def s(c):
 
 
 def d(c):
-    x = s(c)
-    return F.coalesce(
-        F.to_date(x, "yyyy-MM-dd"), F.to_date(x, "dd-MMM-yy"),
-        F.to_date(x, "dd-MMM-yyyy"), F.to_date(x, "yyyyMMdd"), F.to_date(x),
+    return F.expr(
+        f"coalesce("
+        f"  try_to_date(nullif(trim(cast(`{c}` as string)), ''), 'yyyy-MM-dd HH:mm:ss'),"
+        f"  try_to_date(nullif(trim(cast(`{c}` as string)), ''), 'yyyy-MM-dd'),"
+        f"  try_to_date(nullif(trim(cast(`{c}` as string)), ''), 'dd-MMM-yy'),"
+        f"  try_to_date(nullif(trim(cast(`{c}` as string)), ''), 'dd-MMM-yyyy'),"
+        f"  try_to_date(nullif(trim(cast(`{c}` as string)), ''), 'yyyyMMdd'),"
+        f"  try_to_date(nullif(trim(cast(`{c}` as string)), ''))"
+        f")"
     )
 
 
 def ts(c):
-    x = s(c)
-    return F.coalesce(
-        F.to_timestamp(x, "dd-MMM-yy hh.mm.ss.SSSSSS a"),
-        F.to_timestamp(x, "dd-MMM-yy hh.mm.ss.SSS a"),
-        F.to_timestamp(x, "dd-MMM-yy hh.mm.ss a"),
-        F.to_timestamp(x, "yyyy-MM-dd HH:mm:ss"),
-        F.to_timestamp(x),
+    return F.expr(
+        f"coalesce("
+        f"  try_to_timestamp(nullif(trim(cast(`{c}` as string)), ''), 'yyyy-MM-dd HH:mm:ss'),"
+        f"  try_to_timestamp(nullif(trim(cast(`{c}` as string)), ''), 'dd-MMM-yy hh.mm.ss.SSSSSS a'),"
+        f"  try_to_timestamp(nullif(trim(cast(`{c}` as string)), ''), 'dd-MMM-yy hh.mm.ss.SSS a'),"
+        f"  try_to_timestamp(nullif(trim(cast(`{c}` as string)), ''), 'dd-MMM-yy hh.mm.ss a'),"
+        f"  try_to_timestamp(nullif(trim(cast(`{c}` as string)), ''))"
+        f")"
     )
 
 # COMMAND ----------
@@ -108,15 +114,19 @@ cols = ['STREAM_COMPOSIT_ID','STREAM_TABLE_ID','year_month_id','AFFILIATE_ID','T
 for c in cols:
     if c in r.columns:
         r = r.withColumn(c, s(c))
+# Strip trailing '.0' from ID-like columns that arrive as float strings (e.g. '5276612194.0' -> '5276612194')
+for c in ['RELATED_ACCOUNT', 'RELATED_CUSTOMER']:
+    r = r.withColumn(c, F.regexp_replace(F.col(c), r'\.0$', ''))
+
 for c in ['AFFILIATE_ID', 'AC_CCY', 'DRCR_IND', 'TRN_CODE', 'MODULE', 'PRODUCT']:
     r = r.withColumn(c, F.upper(F.col(c)))
 
 r = (
     r.withColumn('YEAR_MONTH_ID', F.col('year_month_id').cast('int'))
-     .withColumn('EVENT_SR_NO', F.col('EVENT_SR_NO').cast('int'))
-     .withColumn('AC_ENTRY_SR_NO', F.col('AC_ENTRY_SR_NO').cast('int'))
-     .withColumn('CURR_NO', F.col('CURR_NO').cast('int'))
-     .withColumn('NTRY_SEQ_NO', F.col('NTRY_SEQ_NO').cast('int'))
+     .withColumn('EVENT_SR_NO', F.expr("try_cast(EVENT_SR_NO as int)"))
+     .withColumn('AC_ENTRY_SR_NO', F.expr("try_cast(AC_ENTRY_SR_NO as long)"))
+     .withColumn('CURR_NO', F.expr("try_cast(CURR_NO as int)"))
+     .withColumn('NTRY_SEQ_NO', F.expr("try_cast(NTRY_SEQ_NO as int)"))
      .withColumn('FCY_AMOUNT', F.regexp_replace('FCY_AMOUNT', ',', '').cast('decimal(20,3)'))
      .withColumn('EXCH_RATE', F.regexp_replace('EXCH_RATE', ',', '').cast('decimal(18,6)'))
      .withColumn('LCY_AMOUNT', F.regexp_replace('LCY_AMOUNT', ',', '').cast('decimal(20,3)'))
@@ -214,13 +224,13 @@ c = c.withColumn(
      .when(~F.col('DRCR_IND').isin('C', 'D'), 'INVALID_DEBIT_CREDIT_INDICATOR')
      .when(F.col('AC_CCY').isNull(), 'MISSING_CURRENCY'),
 )
-c = c.cache()
+# .cache() removed — PERSIST TABLE is not supported on serverless compute;
+# the incremental slice is small enough that recomputation is acceptable.
 v = c.filter(F.col('REJECTION_REASON').isNull())
 bad = c.filter(F.col('REJECTION_REASON').isNotNull())
 
 rejection_rate = bad.count() / n if n else 0.0
 if rejection_rate > REJECTION_RATE_CIRCUIT_BREAKER:
-    c.unpersist()
     fail_notebook(
         NOTEBOOK, "REJECTION_RATE_CIRCUIT_BREAKER_TRIPPED",
         run_id=run_id, rejection_rate=round(rejection_rate, 4),
@@ -236,7 +246,7 @@ v = v.withColumn('_rn', F.row_number().over(wd)).filter('_rn=1').drop('_rn')
 
 # COMMAND ----------
 
-outcols = ['TRANSACTION_KEY','STREAM_COMPOSIT_ID','STREAM_TABLE_ID','STREAM_UPDATE_TIMESTAMP','YEAR_MONTH_ID','AFFILIATE_ID','TRN_REF_NO','EVENT_SR_NO','EVENT','AC_BRANCH','AC_NO','AC_CCY','DRCR_IND','TRANSACTION_DIRECTION','TRANSACTION_SIGN','TRN_CODE','AMOUNT_TAG','FCY_AMOUNT','EXCH_RATE','SOURCE_LCY_AMOUNT','LCY_AMOUNT','ABS_LCY_AMOUNT','NET_SIGNED_AMOUNT','IS_NEGATIVE_AMOUNT','IS_REVERSAL_CANDIDATE','RELATED_CUSTOMER','RELATED_ACCOUNT','RELATED_REFERENCE','MIS_FLAG','MIS_HEAD','TRN_DATE_KEY','TRN_DT','TRANSACTION_DATE','VALUE_DT','VALUE_DATE','TXN_INIT_DATE','FINANCIAL_CYCLE','PERIOD_CODE','INSTRUMENT_CODE','BANK_CODE','TYPE','CATEGORY','CUST_GL','MODULE','MAP_MODULE','MODULE_CATEGORY','MODULE_DESCRIPTION','CLASSIFICATION_STATUS','AC_ENTRY_SR_NO','IB','FLG_POSITION_STATUS','GLMIS_UPDATE_FLAG','USER_ID','CURR_NO','BATCH_NO','PRINT_STAT','PRODUCT_ACCRUAL','AUTH_ID','PRODUCT','GLMIS_VAL_UPD_FLAG','EXTERNAL_REF_NO','DONT_SHOWIN_STMT','IC_BAL_INCLUSION','AML_EXCEPTION','ORIG_PNL_GL','STMT_DT','NTRY_SEQ_NO','VIRTUAL_AC_NO','CLAIM_AMOUNT','SAVE_TIMESTAMP_PARSED','AUTH_TIMESTAMP_PARSED','GRP_REF_NO','PRODUCT_PROCESSOR','RELATED_AC_ENTRY_SR_NO','LOADDATE','SOURCE_FILE_NAME','SOURCE_FILE_PATH','SOURCE_SYSTEM','RAW_INGEST_TIMESTAMP']
+outcols = ['TRANSACTION_KEY','STREAM_COMPOSIT_ID','STREAM_TABLE_ID','STREAM_UPDATE_TIMESTAMP','YEAR_MONTH_ID','AFFILIATE_ID','TRN_REF_NO','EVENT_SR_NO','EVENT','AC_BRANCH','AC_NO','AC_CCY','DRCR_IND','TRANSACTION_DIRECTION','TRANSACTION_SIGN','TRN_CODE','AMOUNT_TAG','FCY_AMOUNT','EXCH_RATE','SOURCE_LCY_AMOUNT','LCY_AMOUNT','ABS_LCY_AMOUNT','NET_SIGNED_AMOUNT','IS_NEGATIVE_AMOUNT','IS_REVERSAL_CANDIDATE','RELATED_CUSTOMER','RELATED_ACCOUNT','RELATED_REFERENCE','MIS_FLAG','MIS_HEAD','TRN_DATE_KEY','TRN_DT','TRANSACTION_DATE','VALUE_DT','VALUE_DATE','TXN_INIT_DATE','FINANCIAL_CYCLE','PERIOD_CODE','INSTRUMENT_CODE','BANK_CODE','TYPE','CATEGORY','CUST_GL','MODULE','MAP_MODULE','MODULE_CATEGORY','MODULE_DESCRIPTION','TRANSACTION_CATEGORY','TRANSACTION_DESCRIPTION','CLASSIFICATION_STATUS','AC_ENTRY_SR_NO','IB','FLG_POSITION_STATUS','GLMIS_UPDATE_FLAG','USER_ID','CURR_NO','BATCH_NO','PRINT_STAT','PRODUCT_ACCRUAL','AUTH_ID','PRODUCT','GLMIS_VAL_UPD_FLAG','EXTERNAL_REF_NO','DONT_SHOWIN_STMT','IC_BAL_INCLUSION','AML_EXCEPTION','ORIG_PNL_GL','STMT_DT','NTRY_SEQ_NO','VIRTUAL_AC_NO','CLAIM_AMOUNT','SAVE_TIMESTAMP_PARSED','AUTH_TIMESTAMP_PARSED','GRP_REF_NO','PRODUCT_PROCESSOR','RELATED_AC_ENTRY_SR_NO','LOADDATE','SOURCE_FILE_NAME','SOURCE_FILE_PATH','SOURCE_SYSTEM','RAW_INGEST_TIMESTAMP']
 out = v.select(*outcols).withColumn('PIPELINE_RUN_ID', F.lit(run_id)).withColumn('CREATED_TIMESTAMP', F.current_timestamp())
 out.createOrReplaceTempView('valid_batch')
 
@@ -281,8 +291,6 @@ spark.createDataFrame(
     'MIN_RAW_INGEST_TIMESTAMP timestamp,MAX_RAW_INGEST_TIMESTAMP timestamp,RECORDS_RECEIVED long,'
     'VALID_RECORDS long,INVALID_RECORDS long,MIN_TRANSACTION_DATE date,MAX_TRANSACTION_DATE date,STATUS string',
 ).write.mode('append').saveAsTable(TBL_PROCESSING_LOG)
-
-c.unpersist()
 
 log_event(
     NOTEBOOK, "SUCCESS", run_id=run_id, records_received=n, valid_records=vc,

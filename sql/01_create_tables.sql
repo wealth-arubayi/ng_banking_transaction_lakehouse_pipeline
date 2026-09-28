@@ -1,5 +1,6 @@
 -- Databricks notebook source
 
+
 -- COMMAND ----------
 
 CREATE CATALOG IF NOT EXISTS ng_banking_lakehouse;

@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 01 · Transaction Ingestion (Bronze)
 # MAGIC Auto Loader ingests CSV transaction extracts from a Unity Catalog Volume into
@@ -49,8 +53,8 @@ except Exception as exc:
 enriched = (
     raw_stream
     .withColumn("RAW_INGEST_TIMESTAMP", F.current_timestamp())
-    .withColumn("SOURCE_FILE_NAME", F.element_at(F.split(F.input_file_name(), "/"), -1))
-    .withColumn("SOURCE_FILE_PATH", F.input_file_name())
+    .withColumn("SOURCE_FILE_NAME", F.element_at(F.split(F.col("_metadata.file_path"), "/"), -1))
+    .withColumn("SOURCE_FILE_PATH", F.col("_metadata.file_path"))
     .withColumn("SOURCE_SYSTEM", F.lit("BANKING_TRANSACTION_SOURCE"))
     .withColumn("SOURCE_BATCH_ID", F.date_format(F.current_timestamp(), "yyyyMMddHHmmssSSS"))
 )
@@ -70,7 +74,7 @@ query.awaitTermination()
 # COMMAND ----------
 
 progress = query.lastProgress or {}
-rows_ingested = int(progress.get("numInputRows", 0)) if progress else 0
+rows_ingested = int(progress.get("numInputRows") or 0) if progress else 0
 
 # Files actually committed to transaction_raw in THIS run, by RAW_INGEST_TIMESTAMP
 # (precise run-start filter, not a rolling window) — this is also the authoritative

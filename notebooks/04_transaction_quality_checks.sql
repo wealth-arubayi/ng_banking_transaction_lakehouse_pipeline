@@ -64,3 +64,35 @@ SELECT TRN_CODE,MODULE,MAP_MODULE,DRCR_IND,COUNT(*) RECORD_COUNT,SUM(ABS_LCY_AMO
 FROM ng_banking_lakehouse.transaction_curated.transaction_entries
 WHERE IS_REVERSAL_CANDIDATE
 GROUP BY TRN_CODE,MODULE,MAP_MODULE,DRCR_IND ORDER BY RECORD_COUNT DESC;
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Empty source columns
+-- Source completeness: columns that exist in the raw schema but are 100% empty in the
+-- source CSV. A sudden drop to 0% population almost always means an upstream extract
+-- change (column renamed, dropped, or feed discontinued). Track these so the source
+-- team is alerted before the gap impacts downstream analytics.
+SELECT
+  'RELATED_AC_ENTRY_SR_NO' AS COLUMN_NAME,
+  COUNT(*) AS TOTAL_ROWS,
+  SUM(CASE WHEN RELATED_AC_ENTRY_SR_NO IS NOT NULL AND TRIM(RELATED_AC_ENTRY_SR_NO) <> '' THEN 1 ELSE 0 END) AS NON_EMPTY_ROWS,
+  ROUND(100.0 * SUM(CASE WHEN RELATED_AC_ENTRY_SR_NO IS NOT NULL AND TRIM(RELATED_AC_ENTRY_SR_NO) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS POPULATION_PCT
+FROM ng_banking_lakehouse.transaction_curated.transaction_entries
+UNION ALL
+SELECT
+  'GRP_REF_NO', COUNT(*),
+  SUM(CASE WHEN GRP_REF_NO IS NOT NULL AND TRIM(GRP_REF_NO) <> '' THEN 1 ELSE 0 END),
+  ROUND(100.0 * SUM(CASE WHEN GRP_REF_NO IS NOT NULL AND TRIM(GRP_REF_NO) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2)
+FROM ng_banking_lakehouse.transaction_curated.transaction_entries
+UNION ALL
+SELECT
+  'GLMIS_UPDATE_FLAG', COUNT(*),
+  SUM(CASE WHEN GLMIS_UPDATE_FLAG IS NOT NULL AND TRIM(GLMIS_UPDATE_FLAG) <> '' THEN 1 ELSE 0 END),
+  ROUND(100.0 * SUM(CASE WHEN GLMIS_UPDATE_FLAG IS NOT NULL AND TRIM(GLMIS_UPDATE_FLAG) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2)
+FROM ng_banking_lakehouse.transaction_curated.transaction_entries
+UNION ALL
+SELECT
+  'ORIG_PNL_GL', COUNT(*),
+  SUM(CASE WHEN ORIG_PNL_GL IS NOT NULL AND TRIM(ORIG_PNL_GL) <> '' THEN 1 ELSE 0 END),
+  ROUND(100.0 * SUM(CASE WHEN ORIG_PNL_GL IS NOT NULL AND TRIM(ORIG_PNL_GL) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2)
+FROM ng_banking_lakehouse.transaction_curated.transaction_entries;

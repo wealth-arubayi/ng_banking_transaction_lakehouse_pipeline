@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 00 · Pipeline Configuration
 # MAGIC Shared constants, environment widgets, and a small structured-logging helper.
@@ -55,7 +59,7 @@ VOL_REFERENCE = f"{VOL_ROOT}/reference/transaction_mapping_seed.csv"
 
 # File lifecycle: incoming/ (Auto Loader watches this) -> processed/ (moved here
 # right after a file is durably committed to transaction_raw.transaction_events)
-# -> archive/YYYY/MM/DD/ (moved here weekly by 06_archive_processed_files.py,
+# -> archive/YYYY/MM/week_NN/ (moved here weekly by 06_archive_processed_files.py,
 # dated by each file's own processed/ timestamp, not by the weekly run date).
 
 # COMMAND ----------

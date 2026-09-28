@@ -16,17 +16,8 @@ resources:
         on_failure:
           - ${var.notification_email}
 
-      job_clusters:
-        - job_cluster_key: setup_cluster
-          new_cluster:
-            spark_version: 15.4.x-scala2.12
-            node_type_id: Standard_DS3_v2
-            num_workers: 0
-            data_security_mode: SINGLE_USER
-
       tasks:
         - task_key: 01_create_tables
-          job_cluster_key: setup_cluster
           notebook_task:
             notebook_path: ../sql/01_create_tables.sql
           max_retries: 0
@@ -34,7 +25,6 @@ resources:
         - task_key: 00b_setup_volume_structure
           depends_on:
             - task_key: 01_create_tables
-          job_cluster_key: setup_cluster
           notebook_task:
             notebook_path: ../notebooks/00b_setup_volume_structure.py
             base_parameters:
@@ -44,7 +34,6 @@ resources:
         - task_key: 02_seed_reference
           depends_on:
             - task_key: 00b_setup_volume_structure
-          job_cluster_key: setup_cluster
           notebook_task:
             notebook_path: ../sql/02_seed_reference.sql
           max_retries: 0

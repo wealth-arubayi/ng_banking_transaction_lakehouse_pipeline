@@ -1,14 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 06 · Archive Processed Files (weekly)
-# MAGIC Sweeps `processed/` into `archive/YYYY/MM/DD/`, run on its own **weekly** schedule
+# MAGIC Sweeps `processed/` into `archive/YYYY/MM/week_NN/`, run on its own **weekly** schedule
 # MAGIC (see `resources/archive_job.yml`) — independent of the daily ingest -> mart job, since
 # MAGIC archiving is housekeeping, not part of the data's critical path.
 # MAGIC
 # MAGIC Each file is dated by **its own last-modified timestamp in `processed/`** (i.e. roughly
 # MAGIC when it was originally ingested), not by today's date — so a week's worth of files
-# MAGIC accumulated in `processed/` still land in the correct daily folder rather than all
+# MAGIC accumulated in `processed/` still land in the correct weekly folder rather than all
 # MAGIC piling into one "archive run day" bucket.
+# MAGIC
+# MAGIC The week number (`week_01` \u2013 `week_05`) is the week **within the file's month**
+# MAGIC (day 1\u20137 = week 1, day 8\u201314 = week 2, etc.), so files group naturally by the
+# MAGIC calendar week they were ingested.
 # MAGIC
 # MAGIC Idempotent: `dbutils.fs.mv` only ever moves a file that's still sitting in `processed/`,
 # MAGIC and dated folders are created on demand — safe to re-run if a previous run partially failed.
@@ -41,8 +45,10 @@ for f in files:
         # modificationTime is epoch millis; this is when the file was written into
         # processed/ by 01_transaction_ingestion.py, i.e. its true processing date.
         file_dt = datetime.fromtimestamp(f.modificationTime / 1000, tz=timezone.utc)
-        year, month, day = file_dt.strftime("%Y"), file_dt.strftime("%m"), file_dt.strftime("%d")
-        dest_dir = f"{VOL_ARCHIVE_ROOT}{year}/{month}/{day}/"
+        year, month, day = file_dt.strftime("%Y"), file_dt.strftime("%m"), file_dt.day
+        # Week within the month: day 1-7 = week 1, day 8-14 = week 2, etc.
+        week_of_month = (day - 1) // 7 + 1
+        dest_dir = f"{VOL_ARCHIVE_ROOT}{year}/{month}/week_{week_of_month:02d}/"
         dest_path = f"{dest_dir}{f.name}"
 
         dbutils.fs.mkdirs(dest_dir)  # no-op if it already exists

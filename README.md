@@ -49,6 +49,149 @@ Full diagrams (medallion layer detail + task DAG) and the reasoning behind each 
 in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Column-level detail is in
 [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md).
 
+## Tables
+
+The pipeline creates 14 tables across three schemas in Unity Catalog (`ng_banking_lakehouse`).
+Key columns are listed below; full column-level descriptions are in
+[`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md).
+
+### Bronze — `transaction_raw` (1 table)
+
+**`transaction_events`** (67 cols, all `string`) — raw CSV landed as-is by Auto Loader, plus ingestion metadata.
+
+| Key column | Type | Description |
+|---|---|---|
+| `TRN_REF_NO` | string | Transaction reference number |
+| `AC_NO` | string | Account number |
+| `TRN_CODE` | string | Transaction code (e.g. F23, T10) |
+| `MODULE` | string | Banking module (e.g. DE, FT, CL) |
+| `DRCR_IND` | string | Debit/credit indicator (C or D) |
+| `LCY_AMOUNT` | string | Local currency amount (raw) |
+| `AC_ENTRY_SR_NO` | string | Account entry serial number (8B+ range) |
+| `AML_EXCEPTION` | string | AML flag (Y or empty) |
+| `RELATED_ACCOUNT` | string | Related account number (float-formatted in source) |
+| `RELATED_CUSTOMER` | string | Related customer number (float-formatted in source) |
+| `RAW_INGEST_TIMESTAMP` | timestamp | Auto Loader ingestion time |
+| `SOURCE_FILE_NAME` | string | Source CSV file name |
+
+### Silver — `transaction_curated` (7 tables)
+
+**`transaction_entries`** (83 cols) — typed, classified, validated transaction records. The pipeline's primary Silver table.
+
+| Key column | Type | Description |
+|---|---|---|
+| `TRANSACTION_KEY` | string | SHA-256 hash of TRN_REF_NO + EVENT_SR_NO + AC_ENTRY_SR_NO (MERGE key) |
+| `TRANSACTION_DIRECTION` | string | CREDIT or DEBIT (derived from DRCR_IND) |
+| `ABS_LCY_AMOUNT` | decimal(20,3) | Absolute LCY amount magnitude |
+| `NET_SIGNED_AMOUNT` | decimal(20,3) | Credit-positive / debit-negative signed amount |
+| `IS_NEGATIVE_AMOUNT` | boolean | True if SOURCE_LCY_AMOUNT < 0 |
+| `IS_REVERSAL_CANDIDATE` | boolean | True if negative AND verified reversal code |
+| `AC_ENTRY_SR_NO` | bigint | Account entry serial number (8B+ range, widened from int) |
+| `TRANSACTION_CATEGORY` | string | Business category from mapping (TRANSFER, DEPOSIT, LOAN, etc.) |
+| `TRANSACTION_DESCRIPTION` | string | Human-readable description from mapping |
+| `MAP_MODULE` | string | Mapped module (UNMAPPED if no match) |
+| `CLASSIFICATION_STATUS` | string | Match level (MAPPED_TRN_MODULE_PRODUCT → UNMAPPED) |
+| `RELATED_ACCOUNT` | string | Clean account number (`.0` suffix stripped) |
+| `RELATED_CUSTOMER` | string | Clean customer number (`.0` suffix stripped) |
+| `AML_EXCEPTION` | string | AML flag passed through from source |
+
+**`transaction_mapping`** (40 rows, 11 cols) — classification reference table driving TRN_CODE/MODULE/PRODUCT → category mapping.
+
+| Column | Type | Description |
+|---|---|---|
+| `TRN_CODE` | string | Transaction code (null = wildcard match) |
+| `MODULE` | string | Banking module (null = wildcard match) |
+| `PRODUCT` | string | Product (null = wildcard match) |
+| `PRIORITY` | int | Tiebreaker (higher wins) |
+| `TRANSACTION_CATEGORY` | string | Business category (TRANSFER, DEPOSIT, LOAN, TRADE_FINANCE, etc.) |
+| `TRANSACTION_DESCRIPTION` | string | Human-readable description |
+| `IS_REVERSAL_CODE` | boolean | Marks verified reversal codes |
+| `ACTIVE_FLAG` | string | Y = active mapping |
+
+**`transaction_rejected`** (13 cols) — rows that failed validation, with rejection reason.
+
+| Column | Type | Description |
+|---|---|---|
+| `TRANSACTION_KEY` | string | Hash of the rejected transaction |
+| `REJECTION_REASON` | string | MISSING_TRANSACTION_REFERENCE, MISSING_ACCOUNT, INVALID_DATE, etc. |
+| `REJECTED_TIMESTAMP` | timestamp | When the row was rejected |
+
+**`pipeline_dq_results`** (7 cols) — DQ check results logged every run for trend tracking.
+
+| Column | Type | Description |
+|---|---|---|
+| `CHECK_NAME` | string | e.g. DUPLICATE_TRANSACTION_KEY, EMPTY_GRP_REF_NO_PCT |
+| `SEVERITY` | string | CRITICAL or WARN |
+| `RESULT_VALUE` | double | Measured value (count or percentage) |
+| `PASSED` | boolean | True if check passed |
+
+**`etl_watermark`** (3 cols) — incremental processing watermark.
+
+| Column | Type | Description |
+|---|---|---|
+| `PIPELINE_NAME` | string | Pipeline identifier |
+| `LAST_RAW_INGEST_TIMESTAMP` | timestamp | Only rows newer than this are processed |
+| `LAST_RUN_TIMESTAMP` | timestamp | When the watermark was last updated |
+
+**`pipeline_processing_log`** (12 cols) — per-run audit trail.
+
+**`pipeline_affected_dates`** (7 cols) — dates/months touched by each run, scoped to mart rebuilds.
+
+### Gold — `transaction_mart` (6 tables)
+
+**`daily_transaction_activity`** (26 cols) — grain: date × branch × currency.
+
+| Key column | Type | Description |
+|---|---|---|
+| `TRANSACTION_DATE` | date | Transaction date |
+| `AC_BRANCH` | string | Branch code |
+| `AC_CCY` | string | Currency |
+| `TRANSACTION_COUNT` | bigint | Total transactions |
+| `TOTAL_CREDIT_AMOUNT` | decimal(38,3) | Sum of credit amounts |
+| `TOTAL_DEBIT_AMOUNT` | decimal(38,3) | Sum of debit amounts |
+| `NET_TRANSACTION_AMOUNT` | decimal(38,3) | Net (credit - debit) |
+| `UNIQUE_TRANSACTION_CATEGORIES` | bigint | Distinct TRANSACTION_CATEGORY values |
+
+**`account_transaction_activity`** (25 cols) — grain: account × month.
+
+| Key column | Type | Description |
+|---|---|---|
+| `AC_NO` | string | Account number |
+| `RELATED_CUSTOMER` | string | Customer number (clean, no `.0`) |
+| `TRANSACTION_MONTH_ID` | int | YYYYMM format |
+| `ACTIVE_TRANSACTION_DAYS` | bigint | Distinct transaction dates |
+| `UNIQUE_TRANSACTION_CATEGORIES` | bigint | Distinct categories |
+
+**`branch_transaction_activity`** (20 cols) — grain: date × branch.
+
+**`transaction_code_activity`** (22 cols) — grain: date × TRN_CODE × category × module × currency.
+
+| Key column | Type | Description |
+|---|---|---|
+| `TRN_CODE` | string | Transaction code |
+| `TRANSACTION_CATEGORY` | string | Business category from curated |
+| `MODULE` | string | Source module |
+| `MAP_MODULE` | string | Mapped module |
+| `AC_CCY` | string | Currency |
+
+**`transaction_category_activity`** (19 cols) — grain: date × category × affiliate × currency.
+
+| Key column | Type | Description |
+|---|---|---|
+| `TRANSACTION_CATEGORY` | string | Business category (TRANSFER, DEPOSIT, etc.) |
+| `TRANSACTION_COUNT` | bigint | Total transactions in this category |
+| `UNIQUE_ACCOUNT_COUNT` | bigint | Distinct accounts |
+| `UNIQUE_BRANCH_COUNT` | bigint | Distinct branches |
+
+**`aml_exception_activity`** (13 cols) — grain: date × branch × currency. AML and high-value monitoring.
+
+| Key column | Type | Description |
+|---|---|---|
+| `AML_FLAGGED_COUNT` | bigint | Source-flagged AML exceptions |
+| `HIGH_VALUE_COUNT` | bigint | Transactions exceeding HIGH_VALUE_THRESHOLD_LCY |
+| `HIGH_VALUE_THRESHOLD_LCY` | decimal(20,3) | Configured threshold (5,000,000) |
+| `TOTAL_EXCEPTION_AMOUNT` | decimal(38,3) | Total value of flagged transactions |
+
 ## Key engineering decisions
 
 > 💡 **In plain terms:** each of these is a place where the "obvious" simple approach breaks in
@@ -65,8 +208,10 @@ in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Column-level detail is in
 - **Data quality is enforced, not just visualized.** `04b_transaction_quality_gate.py` runs six
   CRITICAL integrity checks (duplicate keys, sign/abs/net consistency, unverified reversals) and
   **fails the Databricks task** if any of them breach zero — the mart-building task never runs on
-  data that failed the gate. A companion SQL notebook still exists for ad hoc/dashboard profiling,
-  but the pipeline's correctness doesn't depend on a human reading it.
+  data that failed the gate. Four additional WARN checks track source-column completeness
+  (population % for columns that are currently 100% empty in the feed) to `pipeline_dq_results`
+  for trend monitoring without blocking the pipeline. A companion SQL notebook still exists for ad
+  hoc/dashboard profiling, but the pipeline's correctness doesn't depend on a human reading it.
 - **Incremental everywhere.** The Silver transform only processes rows ingested since the last
   watermark; each Gold mart only rebuilds the exact dates/months touched by the current run. Cost
   stays flat as history accumulates instead of growing with total table size.
@@ -85,6 +230,17 @@ in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Column-level detail is in
   than the archive run date — housekeeping is decoupled from the daily critical path entirely.
 - **No secrets in notebooks.** Any credential a notebook needs (e.g. a failure-alert webhook) is
   retrieved via `dbutils.secrets.get()` at the point of use, never hardcoded or logged.
+- **Type widening for large serial numbers.** `AC_ENTRY_SR_NO` values exceed int32 max
+  (8.0B–8.6B range); the Silver cast uses `long`/`bigint` via Delta type widening, not
+  `int` — which silently returned NULL for all 50,000 rows before the fix.
+- **Source data formatting cleanup.** `RELATED_ACCOUNT` and `RELATED_CUSTOMER` arrive
+  from the CSV as float strings (e.g. `"5276612194.0"`); the transform strips the
+  trailing `.0` so downstream joins and lookups match cleanly.
+- **Source completeness monitoring.** Four columns (`RELATED_AC_ENTRY_SR_NO`,
+  `GRP_REF_NO`, `GLMIS_UPDATE_FLAG`, `ORIG_PNL_GL`) are present in the raw schema but
+  100% empty in the source feed. WARN-level DQ checks log their population % to
+  `pipeline_dq_results` every run, so a sudden change (either direction) is
+  immediately visible in the trend — without blocking the pipeline.
 
 ## Tech stack
 
@@ -115,7 +271,11 @@ ng_banking_transaction_lakehouse_pipeline/
 │   ├── 04_transaction_quality_checks.sql  # DQ profiling (dashboard-friendly)
 │   ├── 04b_transaction_quality_gate.py    # DQ ENFORCEMENT (fails the job)
 │   ├── 05_transaction_mart.py      # Gold: 6 incremental marts
-│   └── 06_archive_processed_files.py  # Weekly: processed/ -> dated archive/
+│   ├── 06_archive_processed_files.py  # Weekly: processed/ -> dated archive/
+│   ├── 07_pipeline_success_notification.py  # Post-success email notification
+│   └── Pipeline Reset and Backfill.py  # One-off: truncate + re-run after schema fixes
+├── scripts/
+│   └── check_undeployed.sh          # Detect changes not yet deployed via DABs
 ├── sql/                             # DDL, reference-data seeding, validation queries
 ├── reference/transaction_mapping_seed.csv  # The classification reference table
 ├── tests/test_transform_rules.py   # pytest — business rules, no Spark cluster needed
@@ -193,6 +353,43 @@ share one physical catalog (`ng_banking_lakehouse`), since only that catalog has
 so far. To get real isolation later, run the one-time setup above under a second catalog name and
 add a `variables: catalog: <name>` override back onto that target.
 
+### Tracking undeployed changes
+
+`scripts/check_undeployed.sh` detects code changes that haven't reached the workspace
+via a DABs deploy yet — useful before a release or as a CI gate. It checks three layers:
+
+1. **Git** — uncommitted edits and unpushed commits (code not even in the repo yet)
+2. **Bundle** — `databricks bundle validate` (is the config structurally deployable?)
+3. **Drift** — files modified after the last deployment timestamp marker
+
+```bash
+# Check for undeployed changes (default target: dev)
+./scripts/check_undeployed.sh
+
+# Check a specific target
+./scripts/check_undeployed.sh -t staging
+
+# Skip bundle validation for a faster Git-only check
+./scripts/check_undeployed.sh --skip-validate
+```
+
+After each successful deploy, stamp the marker so the drift check has a baseline:
+
+```bash
+databricks bundle deploy -t dev
+date -u +%Y-%m-%dT%H:%M:%SZ > .last_deploy_dev
+```
+
+Exit codes: `0` = clean, `1` = undeployed changes found, `2` = error. This makes the
+script suitable as a pre-deploy CI gate:
+
+```yaml
+# .github/workflows/deploy-gate.yml (excerpt)
+- name: Check for undeployed changes
+  run: ./scripts/check_undeployed.sh -t prod
+  continue-on-error: false  # fails the pipeline if changes are undeployed
+```
+
 ### A path-resolution detail worth knowing
 
 Task paths inside a `resources/*.yml` file (e.g. `notebook_path: ../notebooks/01_...py`) are
@@ -220,6 +417,48 @@ not included in this package) produces a configurable, schema-matched synthetic 
 spanning every business line the reference mapping supports — retail channels, funds
 transfer, lending, trade finance, treasury, interest/charges, accounting, securities,
 standing instructions, payments, remittance, SWIFT, and cheque processing.
+
+---
+
+## Changelog
+
+### 2026-09-27 — Transform fixes & DQ enhancements
+
+**Bug fixes in `03_transaction_incremental_transform`:**
+
+- **`TRANSACTION_CATEGORY` & `TRANSACTION_DESCRIPTION`** were computed by the mapping
+  join but missing from the `outcols` list — the MERGE wrote NULL for every row. Added
+  both columns to `outcols`; the mapping table (40 active rows) now populates them
+  correctly (TRANSFER, DEPOSIT, LOAN, TRADE_FINANCE, etc.).
+- **`AC_ENTRY_SR_NO`** was cast as `try_cast(... as int)`, but source values range
+  8.0B–8.6B — all exceed int32 max (2.1B), so every row became NULL. Changed the cast
+  to `long` and widened the curated table column from `int` to `bigint` via Delta type
+  widening (`delta.enableTypeWidening`). All 50,000 rows now populate correctly.
+- **`RELATED_ACCOUNT` & `RELATED_CUSTOMER`** arrived from the source CSV as float
+  strings (e.g. `"5276612194.0"`). Added `regexp_replace(col, r'\.0$', '')` to strip
+  the trailing `.0` so IDs are clean integers.
+
+**Data quality enhancements:**
+
+- **Notebook 04** — added SQL profiling cell reporting population % for four columns
+  that are 100% empty in the source feed (`RELATED_AC_ENTRY_SR_NO`, `GRP_REF_NO`,
+  `GLMIS_UPDATE_FLAG`, `ORIG_PNL_GL`).
+- **Notebook 04b** — added four WARN-level checks
+  (`EMPTY_RELATED_AC_ENTRY_SR_NO_PCT`, `EMPTY_GRP_REF_NO_PCT`,
+  `EMPTY_GLMIS_UPDATE_FLAG_PCT`, `EMPTY_ORIG_PNL_GL_PCT`) that log population % to
+  `pipeline_dq_results` every run for trend tracking.
+
+**Pipeline operations:**
+
+- Created `Pipeline Reset and Backfill` notebook to refresh curated + mart tables
+  after the schema fixes. Required because `AC_ENTRY_SR_NO` is part of the
+  `TRANSACTION_KEY` hash — old keys (NULL from int overflow) differ from new keys
+  (real values), so a full refresh was needed to avoid duplicate rows.
+
+**Deployment tooling:**
+
+- Added `scripts/check_undeployed.sh` — detects Git-uncommitted, bundle-invalid, and
+  post-deploy-drift changes before a release.
 
 ---
 

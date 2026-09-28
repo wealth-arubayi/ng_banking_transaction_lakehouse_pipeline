@@ -16,8 +16,8 @@
 COPY INTO ng_banking_lakehouse.transaction_curated.transaction_mapping
 FROM '/Volumes/ng_banking_lakehouse/transaction_raw/transaction_files/reference/transaction_mapping_seed.csv'
 FILEFORMAT = CSV
-FORMAT_OPTIONS ('header' = 'true', 'inferSchema' = 'false')
-COPY_OPTIONS ('mergeSchema' = 'true');
+FORMAT_OPTIONS ('header' = 'true', 'inferSchema' = 'true')
+COPY_OPTIONS ('mergeSchema' = 'false');
 
 -- =============================================================================
 -- FALLBACK — only run the block below INSTEAD OF the COPY INTO above, never in
