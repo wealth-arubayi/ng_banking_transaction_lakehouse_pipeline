@@ -7,7 +7,10 @@ plain Python (no PySpark/Spark session required) so they run in a few
 milliseconds as part of a normal `pytest` CI step — Spark integration
 testing for the full notebook is out of scope for this file by design.
 
-Run with:  pytest tests/test_transform_rules.py -v
+Run with:
+  pytest tests/test_transform_rules.py -v           # Databricks UI test runner
+  PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/   # CLI (required on DABs FUSE mount)
+  ./scripts/run_tests.sh                              # wrapper script (sets env for you)
 """
 
 from dataclasses import dataclass
